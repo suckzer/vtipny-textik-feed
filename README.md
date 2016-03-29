@@ -13,3 +13,8 @@ http://www.okoun.cz/boards/vymysli_vtipny_textik . If it finds a picture differe
 the last one known, it downloads it and adds it to an Atom feed. This Atom feed can then be
 published on feed burner or elsewhere.
 
+## Branch `replies-grabber`
+
+This traverses all the replies in the discussions and notes all the parts of the discussion, 
+including the body, if it's an reply to someone's else contribution, etc. This can be later 
+used to reconstruct the feed, download the images etc.
