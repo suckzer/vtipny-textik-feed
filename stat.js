@@ -167,9 +167,6 @@ if (!fs.existsSync(picsLocalFolder)) {
     fs.writeFileSync(picsLocalFolder + path.sep + 'README', 'Here come the downloaded pics');
 }
 
-let picUrls = Object.keys(picCount);
-
-let urls2files = {}; // hash, that will have key as URL
 let picIdx = 0; // the ever increasing counter for the pictures
 
 let fetchedPictures = {}; // this will contain map with data structure
@@ -186,19 +183,21 @@ if(fs.existsSync(fetchedPicturesJSONfile)){
 let fetchList = []; // will contain an array of urls and lists to fetch
 
 // prepare list of pictures to fetch
-while (picUrls.length > 0) {
-    let procPicUrl = picUrls.pop();
-    if(fetchedPictures[procPicUrl] !== undefined
-        && fetchedPictures[procPicUrl].status === 200){
-        continue; // if the picture was already fetched, ignore it this time
-    }
-    let procPicNameMatch = procPicUrl.match(/([^\/]+$)/);
-    if (procPicNameMatch !== null) {
-        let localName = picsLocalFolder +  path.sep  + (10000 + picIdx).toString().substr(1)
-            + '-' + procPicNameMatch[1];            
-        ++picIdx;
-        
-        fetchList.push({url : procPicUrl, file : localName});
+for(let postId in postsById){
+    for(let procPicUrl of postsById[postId].picUrls){
+        if(fetchedPictures[procPicUrl] !== undefined
+            && fetchedPictures[procPicUrl].status === 200){
+                fetchedPictures[procPicUrl].postId = postId;
+            continue; // if the picture was already fetched, ignore it this time
+        }
+        let procPicNameMatch = procPicUrl.match(/([^\/]+$)/);
+        if (procPicNameMatch !== null) {
+            let localName = picsLocalFolder +  path.sep  + (10000 + picIdx).toString().substr(1)
+                + '-' + procPicNameMatch[1];            
+            ++picIdx;
+            
+            fetchList.push({url : procPicUrl, file : localName, postId : postId});
+        }
     }
 }
 
@@ -231,7 +230,8 @@ function procNextPicFromList(){
                 
                 // console.log(`Content type: ${res.headers['content-type']}`);
                 fetchedPictures[fetchData.url] = {
-                    status : res.statusCode
+                    status : res.statusCode,
+                    postId : fetchData.postId,
                 };
                 // fetchNextPic(true)
                 
@@ -260,55 +260,6 @@ function procNextPicFromList(){
         // fetchNextPic();
     }
 }
-
-// function procNextPicFromList(){
-//     if(fetchList.length > 0){
-//         // if there are still some pics to process                        
-//         let fetchData = fetchList.pop();
-        
-//         let reqOptions = {
-//             url : fetchData.url,
-//             encoding: null,
-//         }
-        
-//         console.log(`Current reqCount: ${curRequests}, url: ${fetchData.url}, pics2go: ${fetchList.length}`);
-        
-//         let writeStream = fs.createWriteStream(fetchData.file); 
-        
-//         request.get(reqOptions, function(err, res, buffer){
-//             if(err !== null){
-//                 console.log('For ${fetchData.url} received an error', err );
-//                 fetchedPictures[fetchData.url] = {
-//                     status : -1,
-//                     error : err
-//                 }
-//                 fetchNextPic(true);
-//             }
-//             else{
-//                 console.log(`Status code: ${res.statusCode}, picUrl ${fetchData.url}, path was: ${fetchData.file}`);
-                
-//                 // console.log(`Content type: ${res.headers['content-type']}`);
-//                 fetchedPictures[fetchData.url] = {
-//                     status : res.statusCode
-//                 };
-                
-//                 if(res.statusCode === 200){
-//                     // picture was returned correctly
-//                     fetchedPictures[fetchData.url].file = fetchData.file;
-//                     fs.writeFile(fetchData.file, buffer);
-//                 }
-//                 else{
-//                     console.log("Returned statusCode ${statusCode}");
-//                 }
-//                 fetchNextPic(true);
-//             }
-//         });
-            
-            
-//         // try to fetch next picture from the list
-//         // fetchNextPic();
-//     }
-// } 
 
 
 /**
