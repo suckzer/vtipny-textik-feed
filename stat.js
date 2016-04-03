@@ -155,6 +155,10 @@ for(let postId in postsById){
 
 console.log("total reactions with pics: " + totalPostsWithPicsInReactions);
 
+// save the posts by ID for further use
+
+fs.writeFile(path.join(__dirname, 'postsById.json'), JSON.stringify(postsById, null, 2));
+
 
 // ========================================================
 // this part bellow is used to download the pictures
@@ -187,7 +191,12 @@ for(let postId in postsById){
     for(let procPicUrl of postsById[postId].picUrls){
         if(fetchedPictures[procPicUrl] !== undefined
             && fetchedPictures[procPicUrl].status === 200){
-                fetchedPictures[procPicUrl].postId = postId;
+                if(fetchedPictures[procPicUrl].postIds === undefined){
+                    fetchedPictures[procPicUrl].postIds = [postId]; // same picture can be contained in more posts actually
+                }
+                else{
+                    fetchedPictures[procPicUrl].postIds.push(postId);
+                }
             continue; // if the picture was already fetched, ignore it this time
         }
         let procPicNameMatch = procPicUrl.match(/([^\/]+$)/);
