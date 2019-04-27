@@ -1,17 +1,24 @@
 'use strict';
 
-let fs = require('fs'),
-    cheerio = require('cheerio'),
+const GCP_PROJECT_ID = 'cloudstorage-test-237315';
+const GCP_KEY_FILENAME = 'cloudstorage-test-237315-0a2d840ab4d6.json';
+const {Datastore} = require('@google-cloud/datastore');
+const moment = require('moment-timezone');
+const datastore = new Datastore({
+    projectId: GCP_PROJECT_ID,
+    keyFilename: GCP_KEY_FILENAME
+});
+
+const cheerio = require('cheerio'),
     request = require('request'),
-    nodeUuid = require('node-uuid'),
-    path = require('path');
+    nodeUuid = require('node-uuid');
 
 let feedConfig = {
     feedName : 'Vymysli vtipný textík - výhreci jednotlivých kol',
     // where the feed gets exported
-    feedExportPath : "/var/www/default/witty-txt-pic/witty-txt-pic-feed.xml",
+    // feedExportPath : "/var/www/default/witty-txt-pic/witty-txt-pic-feed.xml",
     // where the feed gets stored
-    feedJSONdir : "/var/tmp/witty-txt-pic-feed", 
+    // feedJSONdir : "/var/tmp/witty-txt-pic-feed", 
     // what is the name of JSON file, containing the meta data from which the 
     // feed is generated
     feedJSONfile : "witty-txt.json",
@@ -20,60 +27,114 @@ let feedConfig = {
     // path to the page being scraped
     feedSource : 'http://www.okoun.cz/boards/vymysli_vtipny_textik'
 };
+
+
+async function getLatestFeedItem(){
+    const query = datastore.createQuery ('WittyTxt', 'FeedItem')
+           .order('timestamp',  { descending: true })
+           .limit(1);
+    const [feedItems] = await datastore.runQuery(query);
+    return feedItems[0] || [];
+}
+
+async function storeFeedItems(feedItems){
+    const items2insert = [];
+    feedItems.forEach(elem => {
+        const {imgSrc, authorNick, timestamp, UUID} = elem;
+        const tsOut = new Date(Date.parse(timestamp));
+        const key = datastore.key({
+            namespace : 'WittyTxt',
+            path: ['FeedItem', UUID]
+        });
+        items2insert.push({
+            key, 
+            data : {
+                imgSrc, authorNick, timestamp : tsOut, UUID
+            }
+        });
+
+        // console.log(items2insert);
+    });
+
+    await commitFeedItems2Datastore(items2insert);
+}
+
+async function commitFeedItems2Datastore(items2insert){
+    console.log(`Trying to store ${items2insert.length} feed items`);
+    while(items2insert.length > 0){
+        try {
+            const transaction = datastore.transaction();
+            await transaction.run();
+            transaction.save(items2insert.splice(0, 400));
+            await transaction.commit();
+            console.log(`FeedItems stored successfully, ${items2insert.length} to go`);
+        } catch (err) {
+            console.error('ERROR:', err);
+            // res.send('ERROR:', err);
+            return err;
+        }
+    }
+}
+
+// used to bootstrap the database
+async function storeExistingFeedItems(){
+    const items = require('./all-items.json');
+    await storeFeedItems(items);
+    console.log("Feed items succesfully stored");
+}
+
+async function scrapeFeedItems(){
+    var reqOptions = {
+        url : feedConfig.feedSource,
+        headers: {
+            'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language':'en-US,en;q=0.8',
+            'Cache-Control':'max-age=0',
+            'Connection':'keep-alive',
+        },
+        gzip : true,
+    };
     
-if(fs.existsSync(__dirname + path.sep + 'feedconfig.js')){
-    // if there is file called feed config in the crurent directory, 
-    // it might contain some settings, that will be different from
-    // the defaults or some additional settings
-    var feedCustomConfig = require(__dirname + path.sep + 'feedconfig.js');
-    for(let cfgKey in feedCustomConfig){
-        feedConfig[cfgKey] = feedCustomConfig[cfgKey];
-    }
+    return new Promise((resolve, reject) => {
+        request.get(reqOptions, (err, res, body) => {
+            if(err) return reject(err);
+            if(!res.statusCode === 200){
+                reject(new Error("scrapeFeedItems: Nedostal vraceny stauskod 200, to je zle"));
+            }
+            resolve(body);
+        });
+    });
 }
 
-// test if the folders for the storage of the feed exist and if not, create them
+// test if the folders for the storage of the feed exist and if not, create them :)
 
-if(!fs.existsSync(feedConfig.feedJSONdir)){
-    fs.mkdirSync(feedConfig.feedJSONdir);
-    fs.writeFile(feedConfig.feedJSONdir + path.sep + 'README.md', `# Folder to store data of the feed '${feedConfig.feedName}'\n`);
-    if(!fs.existsSync(feedConfig.feedJSONdir + path.sep + 'old')){
-        fs.mkdirSync(feedConfig.feedJSONdir + path.sep + 'old');
-        fs.writeFile(feedConfig.feedJSONdir + path.sep + 'old' + 
-                      path.sep + 'README.md', `# Folder to store old versions of data from the feed '${feedConfig.feedName}'\n`);
-    }
+if(require.main == module){
+    (async () => {
+        // console.log(await fetchAndUpdateWiningImage());
+        storeExistingFeedItems();
+        // await getLatestTask();
+        //console.log(await produceAtomFeed());
+        // const body = await scrapeFeedItems();
+        // console.log(body);
+        // const itemsFound = await processFeedItemsFetch();
+        // console.log("Najdenych novych " + itemsFound);
+        // console.log(await produceAtomFeed());
+        // uploadAllFeedItems2FTP()
+        // testSub();
+    })();
 }
-
-var reqOptions = {
-    // url: 'http://www.pervers.cz/?Loc=fre&Forum=215906',
-    url : feedConfig.feedSource,
-    headers: {
-        'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language':'en-US,en;q=0.8',
-        'Cache-Control':'max-age=0',
-        'Connection':'keep-alive',
-    },
-    gzip : true,
-};
-
-request.get(reqOptions, processPageCallback);
-
 /**
  * Callback that handles the request
  */ 
-
-function processPageCallback(err, response, body){
-    if(err) throw err;
-    if(!response.statusCode === 200){
-        throw Error(`Expected status code 200 but received ${response.statusCode}`);
-    }
-    processContent(body);
-}
 
 /**
  * Searches the body to find image in header
  */
 
-function processContent(body){
+exports.fetchAndUpdateWiningImage = fetchAndUpdateWiningImage;
+
+async function fetchAndUpdateWiningImage(){
+    const body = await scrapeFeedItems();
     let $ = cheerio.load(body.toString());
     let imgsInHeader = $('div.welcome div.content img');
     // grab the last image src attribute - this seems to be the last attribute
@@ -93,7 +154,10 @@ function processContent(body){
     }    
     if(imgSrc.length > 0){ 
         // there is some image, so pass it on and try to find out if it's new
-        processImageAndAuthorFound(imgSrc, authorNick);
+        return processImageAndAuthorFound(imgSrc, authorNick);
+    }
+    else{
+        return "No image could be scraped check the webpage!";
     }
 }
 
@@ -103,82 +167,68 @@ function processContent(body){
  * data and calls export
  */
 
-function processImageAndAuthorFound(imgSrc, authorNick){
-    let feedDataFile = feedConfig.feedJSONdir + path.sep + feedConfig.feedJSONfile;
-    let feedData = []; // feed data is an array of objects
-    if(fs.existsSync(feedDataFile)){
-        // loads the JSON if it exists
-        feedData = JSON.parse(fs.readFileSync(feedDataFile)); 
-    }
-    
+async function processImageAndAuthorFound(imgSrc, authorNick){    
+    const latestFeedItem = await getLatestFeedItem();
     let feedUpdateIsNeeded = false; // will be set to true, if feed update is needed
-    
-    if(feedData.length > 0){
-        // if there are already any records in the feed
-        if(feedData[0].imgSrc !== imgSrc){
+    // console.log(latestFeedItem);
+    if(latestFeedItem){
+            // if there are already any records in the feed
+        if(latestFeedItem.imgSrc !== imgSrc){
             // if the src of the image differs, 
             // create new record and place it at the top
             feedUpdateIsNeeded = true;
+        }else{
+            feedUpdateIsNeeded = false;
         }
-    }else{
-        feedUpdateIsNeeded = true;
     }
     
     if(feedUpdateIsNeeded === true){
         var postDate = new Date();
         postDate.setMinutes(0); // if this is run repeatedly, reset minute and second, 
         postDate.setSeconds(0); // so that there isn't a repetitve pattern
-
-        feedData.unshift({
-            imgSrc : imgSrc,
-            authorNick : authorNick,
+        // just one item at time
+        const feedData = [{
+            imgSrc,
+            authorNick,
             timestamp : postDate, 
             UUID : nodeUuid.v4(),
-        });
+        }];
         
-        if(fs.existsSync(feedDataFile)){
-            let ofMtime = fs.statSync(feedDataFile).mtime; // mtime of the original file
-            
-            let ofTs = ofMtime.getFullYear().toString() 
-                            + (101 + ofMtime.getMonth()).toString().substr(1)
-                            + (100 + ofMtime.getDate()).toString().substr(1) + '_' + 
-                            + (100 + ofMtime.getHours()).toString().substr(1) 
-                            + (100 + ofMtime.getMinutes()).toString().substr(1);
-
-            let oldFeedDataFile = feedConfig.feedJSONdir + path.sep + 'old' + path.sep 
-                   + feedConfig.feedJSONfile.replace(/json$/, ofTs + '.json');
-            // preserve the old data file for reference purposes
-            fs.renameSync(feedDataFile, oldFeedDataFile);
-        }
-        
-        // cut the old entries
-        feedData.splice(feedConfig.feedMaxEntries);
-        fs.writeFileSync(feedDataFile, JSON.stringify(feedData, null, 2));
-        // now that the new version of the data file has been written, 
-        // call function, that creates the Atom feed
-        produceAtomFeed(feedData);
+        // store newly found feed item
+        await storeFeedItems(feedData);
+        return `Stored new witty pic : ${imgSrc}`;
+    }
+    else{
+        return "No new witty pic found\n";
     }
 }
 
-function produceAtomFeed(feedData){
-    if(feedData === undefined){
-        // if the feed data wasn't passed, load it
-        let feedDataFile = feedConfig.feedJSONdir + path.sep + feedConfig.feedJSONfile;
-        if(fs.existsSync(feedDataFile)){
-            // loads the JSON if it exists
-            feedData = JSON.parse(fs.readFileSync(feedDataFile)); 
-        }
-        else{
-            return; // without data and the file, there isn't much to do
-        }
-    }
-    
+exports.produceAtomFeed = produceAtomFeed;
+
+async function produceAtomFeed(){
+    const query = datastore.createQuery ('WittyTxt', 'FeedItem')
+           .order('timestamp',  { descending: true })
+           .limit(feedConfig.feedMaxEntries);
+    const [feedItems] = await datastore.runQuery(query);
+    // console.log(feedItems);
+    const feedData = [];
+    feedItems.forEach(fe => {
+      const feUUID = fe[datastore.KEY]; 
+      const {imgSrc, authorNick, timestamp} = fe;     
+
+      feedData.push({ UUID : feUUID.name, imgSrc, authorNick, timestamp })
+    });
+    // console.log(feedData);
+    // process.exit();
+    const hoursSub = parseInt(moment.tz(feedData[0].timestamp.toISOString(), 'Europe/Berlin').format().substr(19,3) , 10);
+    const updatedDate = new Date(feedData[0].timestamp.getTime() - (hoursSub * 3600 * 1000));
+
     let feedParts = [
       '<?xml version="1.0" encoding="UTF-8"?>' ,
       `<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">\n`+
       `<id>${feedConfig.feedSource}</id>` + "\n" +
       `<title>${feedConfig.feedName}</title>` + "\n" + 
-      '<updated>' + feedData[0].timestamp.toISOString() + '</updated>',
+      '<updated>' + updatedDate.toISOString() + '</updated>',
       `<link href="${feedConfig.feedSource}" rel="alternate"/>`, 
     ];
     
@@ -188,14 +238,23 @@ function produceAtomFeed(feedData){
             // in case the date came from JSON, parse it firts
             picTS = new Date(Date.parse(picTS));
         }
+        const hoursSub = parseInt(moment.tz(picTS.toISOString(), 'Europe/Berlin').format().substr(19,3) , 10);
+
+        picTS = new Date(picTS.getTime() - (hoursSub * 3600 * 1000));
+
         let formatedDate = picTS.getFullYear() + '-' + (picTS.getMonth() + 101).toString().substr(1) + '-' + (picTS.getDate() + 100).toString().substr(1) 
                                 + ' ' + (picTS.getHours() + 100).toString().substr(1) + ':' + (picTS.getMinutes() + 100).toString().substr(1);
+
+
+        // console.log(`bPost.date before: ${bPost.date}`);
+                        
+                                
         var entry = `<entry>` +
                         `<id>${picPost.UUID}</id>\n` +
                         `<link href="${feedConfig.feedSource}"/>\n` +
                         `<title>${picPost.authorNick} - ${formatedDate}</title>\n` +
                         `<updated>${picTS.toISOString()}</updated>\n` +
-                        `<summary type="html" >&lt;img src="${picPost.imgSrc}" title="autor: ${picPost.authorNick}"/&gt;&lt;br/&gt;autor: ${picPost.authorNick}</summary>\n` +
+                        `<summary type="html" >&lt;a href="${picPost.imgSrc}"&gt;&lt;img src="${picPost.imgSrc}" title="autor: ${picPost.authorNick}"/&gt;&lt;a/&gt;&lt;br/&gt;autor: ${picPost.authorNick}</summary>\n` +
                     `</entry>`;
 
         feedParts.push(entry);
@@ -203,5 +262,5 @@ function produceAtomFeed(feedData){
     
     feedParts.push('</feed>');
     var feedHtmlOutOut = feedParts.join('\n');
-    fs.writeFileSync(feedConfig.feedExportPath, feedHtmlOutOut);
+    return feedHtmlOutOut;
 }
